@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>스마트 PDF 문서 비교기 (Web Ver.)</title>
+    <!-- PDF.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- Diff Match Patch (Replaced with jsdiff for better stability) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.2.0/diff.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --border-color: #dee2e6;
+            --del-bg: #ffeef0;
+            --del-color: #b31d28;
+            --ins-bg: #e6ffed;
+            --ins-color: #22863a;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--bg-color);
+            color: #333;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .controls {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-bottom: 40px;
+        }
+        .file-input-wrapper {
+            flex: 1;
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .file-input-wrapper label {
+            display: block;
+            text-align: center;
+            margin-bottom: 15px;
+            font-weight: bold;
+            color: #333;
+            font-size: 1.1em;
+        }
+        .drop-zone {
+            border: 3px dashed #cbd5e0;
+            border-radius: 12px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background-color: #f8f9fa;
+            position: relative;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: #0066ff;
+            background-color: #eef4ff;
+            transform: translateY(-2px);
+        }
+        .drop-zone.active {
+            border-color: #22863a;
+            background-color: #f0fff4;
+            border-style: solid;
+        }
+        .drop-zone p {
+            margin: 0;
+            color: #666;
+            font-size: 0.95em;
+            line-height: 1.5;
+        }
+        .drop-zone .icon {
+            font-size: 40px;
+            margin-bottom: 10px;
+            display: block;
+        }
+        .file-name {
+            margin-top: 15px;
+            font-weight: bold;
+            color: #0066ff;
+            font-size: 0.9em;
+            word-break: break-all;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        button#compareBtn {
+            display: block;
+            width: 200px;
+            margin: 0 auto 30px;
+            padding: 12px;
+            background-color: #0066ff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button#compareBtn:hover {
+            background-color: #0052cc;
+        }
+        button#compareBtn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .diff-container {
+            display: flex;
+            gap: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            min-height: 500px;
+        }
+        .panel {
+            flex: 1;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 15px;
+            overflow-y: auto;
+            max-height: 800px;
+            background-color: #fff;
+            line-height: 1.6;
+            font-size: 14px;
+            white-space: pre-wrap; /* 줄바꿈 유지 */
+        }
+        .panel-header {
+            font-weight: bold;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--border-color);
+            text-align: center;
+        }
+        /* Highlight Styles */
+        del {
+            background-color: var(--del-bg);
+            color: var(--del-color);
+            text-decoration: none; /* 취소선 대신 색상으로 */
+            border-bottom: 1px solid var(--del-color);
+            padding: 2px 0;
+        }
+        ins {
+            background-color: var(--ins-bg);
+            color: var(--ins-color);
+            text-decoration: none;
+            border-bottom: 1px solid var(--ins-color);
+            padding: 2px 0;
+        }
+        .section-header {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #0066ff;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            border-bottom: 1px dashed #ccc;
+            padding-bottom: 5px;
+        }
+        #loading {
+            display: none;
+            text-align: center;
+            font-size: 18px;
+            margin: 20px 0;
+            color: #0066ff;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>📄 스마트 PDF 문서 비교기 (Web Ver.)</h1>
+    <p>서버 전송 없이 브라우저에서 안전하게 비교하세요. (효능·용법·주의사항 추출)</p>
+</div>
+
+<div class="controls">
+    <div class="file-input-wrapper">
+        <label>📁 이전 버전 (Old PDF)</label>
+        <div class="drop-zone" id="drop-zone-1">
+            <span class="icon">📄</span>
+            <p>이곳을 클릭하거나<br>파일을 드래그하여 놓으세요</p>
+            <input type="file" id="file1" accept="application/pdf">
+            <div class="file-name" id="file-name-1"></div>
+        </div>
+    </div>
+    <div class="file-input-wrapper">
+        <label>📁 새로운 버전 (New PDF)</label>
+        <div class="drop-zone" id="drop-zone-2">
+            <span class="icon">🆕</span>
+            <p>이곳을 클릭하거나<br>파일을 드래그하여 놓으세요</p>
+            <input type="file" id="file2" accept="application/pdf">
+            <div class="file-name" id="file-name-2"></div>
+        </div>
+    </div>
+</div>
+
+<button id="compareBtn">🔍 비교 시작하기</button>
+<div id="loading">문서 분석 및 비교 중... ⏳</div>
+
+<div class="diff-container">
+    <div class="panel">
+        <div class="panel-header" style="color: #b31d28;">[이전 문서] 삭제/변경된 내용</div>
+        <div id="output1"></div>
+    </div>
+    <div class="panel">
+        <div class="panel-header" style="color: #22863a;">[새 문서] 추가/변경된 내용</div>
+        <div id="output2"></div>
+    </div>
+</div>
+
+<div class="summary-container" style="margin-top: 30px; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+    <h3 style="border-bottom: 2px solid #0066ff; padding-bottom: 10px; color: #333; margin-top: 0;">📋 핵심 변경 요약 (주요 문장/단락)</h3>
+    <p style="color: #666; font-size: 0.9em; margin-bottom: 15px;">* 단순 오타나 짧은 수정은 제외하고, <strong>15글자 이상</strong>의 굵직한 변경사항만 모아서 보여줍니다.</p>
+    <div id="summaryOutput" style="line-height: 1.6;"></div>
+</div>
+
+<script>
+    // PDF.js Worker 설정
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // ---------------------------------------------------------
+    // 1. 텍스트 추출 및 필터링 로직 (Python 로직 포팅)
+    // ---------------------------------------------------------
+    
+    async function extractTextFromPdf(file) {
+        if (!file) return "";
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+        let fullText = "";
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const textContent = await page.getTextContent();
+            
+            // PDF.js는 텍스트 아이템 리스트를 줍니다. 이를 줄바꿈 등을 고려해 합칩니다.
+            let lastY = -1;
+            let pageText = "";
+            for (let item of textContent.items) {
+                // Y좌표가 크게 바뀌면 줄바꿈으로 간주 (간단한 로직)
+                if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
+                    pageText += "\n";
+                }
+                pageText += item.str + " "; // 단어 간 공백
+                lastY = item.transform[5];
+            }
+            fullText += pageText + "\n";
+        }
+        return extractTargetSections(fullText);
+    }
+
+    function extractTargetSections(fullText) {
+        // 1. 헤더 찾기 (Regex)
+        // Python: r"(?m)^[\s\d\.\•\[【\|·\-]*(?:" + keyword_pattern + r")[^\n]{0,50}$"
+        // JS는 (?m) 플래그가 없으므로 'm' 플래그 사용
+        const keywordPattern = "(?:효\\s*능|효\\s*과|용\\s*법|용\\s*량|투\\s*여|주\\s*의\\s*사\\s*항|경\\s*고|성\\s*상|저\\s*장|보\\s*관|기\\s*간|원\\s*료|제\\s*조|포\\s*장|구\\s*성)";
+        const headerRegex = new RegExp(`^[\\s\\d\\.\\•\\[【\\|·\\-]*(${keywordPattern})[^\\n]{0,50}$`, "gm");
+
+        let matches = [];
+        let match;
+        while ((match = headerRegex.exec(fullText)) !== null) {
+            matches.push({
+                text: match[0].trim(),
+                index: match.index,
+                end: match.index + match[0].length
+            });
+        }
+
+        if (matches.length === 0) return extractFallback(fullText); // Fallback
+
+        // Target Keywords
+        const targetGroups = {
+            "효능": ["효능", "효과"],
+            "용법": ["용법", "용량", "투여"],
+            "주의": ["주의", "경고", "환자"]
+        };
+
+        let result = "";
+
+        for (let i = 0; i < matches.length; i++) {
+            const header = matches[i];
+            const cleanTitle = header.text.replace(/[\s\[\]【】\.\d\•]/g, "");
+            
+            let isTarget = false;
+            for (let key in targetGroups) {
+                if (targetGroups[key].some(t => cleanTitle.includes(t))) {
+                    isTarget = true;
+                    break;
+                }
+            }
+            
+            if (isTarget) {
+                const startPos = header.end;
+                const endPos = (i < matches.length - 1) ? matches[i+1].index : fullText.length;
+                let content = fullText.substring(startPos, endPos).trim();
+                
+                if (content.length > 2) {
+                    result += `\n\n--- [${header.text}] ---\n${content}`;
+                }
+            }
+        }
+        return result;
+    }
+
+    function extractFallback(fullText) {
+        // 간단히 전체 텍스트 반환 혹은 추가 로직 구현 가능
+        return fullText;
+    }
+
+    // ---------------------------------------------------------
+    // 2. 텍스트 정규화 (Normalization)
+    // ---------------------------------------------------------
+    function normalizeText(text) {
+        if (!text) return "";
+        
+        // 0. 노이즈 제거
+        text = text.replace(/(PDF|XML|HTML)\s*다운로드/gi, "");
+        text = text.replace(/변경\s*이력/g, "");
+        text = text.replace(/https?:\/\/\S+/g, "");
+        text = text.replace(/\d{2,4}[. ]+\d{1,2}[. ]+\d{1,2}[.]?/g, ""); // Date
+        text = text.replace(/(오전|오후)\s*\d{1,2}\s*[:]\s*\d{2}(?:\s*[:]\s*\d{2})?/g, ""); // Time
+        text = text.replace(/\b\d+\s*\/\s*\d+\b/g, ""); // Page num
+        text = text.replace(/cacheSeq=[a-zA-Z0-9]+/g, "");
+
+        // -------------------------------------------------------------
+        // [추가] 1. 특수문자/문장부호 제거
+        // 마침표(.), 쉼표(,) 등으로 인한 차이를 무시하기 위해 공백으로 치환
+        text = text.replace(/[.\-,\[\]\(\)\{\}\'"·ㆍ•▶■]/g, " ");
+
+        // [삭제됨] 한글 글자 사이 공백 제거 로직
+        // -------------------------------------------------------------
+
+        // 3. 종결어미 통일 (존댓말 -> 반말화)
+        // 합니다 -> 한다, 됩니다 -> 된다 등으로 통일하여 "합니다/한다" 차이 무시
+        text = text.replace(/합니다/g, "한다");
+        text = text.replace(/됩니다/g, "된다");
+        text = text.replace(/있습니다/g, "있다");
+        text = text.replace(/없습니다/g, "없다");
+        text = text.replace(/것입니다/g, "것이다");
+        text = text.replace(/가능합니다/g, "가능하다");
+
+        // 기존 로직: (했/였...)(습니/옵니..)?다 -> 다
+        text = text.replace(/(했|였|았|었|겠)?(습니|옵니|비니)?다\b/g, "$1다");
+        text = text.replace(/입니다\b/g, "이다");
+
+        // 4. 공백 정리
+        text = text.replace(/\t/g, " ");
+        text = text.replace(/\s+/g, " ").trim();
+
+        return text; 
+    }
+
+    // ---------------------------------------------------------
+    // 3. 비교 (Diff) 및 시각화 using jsdiff
+    // ---------------------------------------------------------
+    function computeDiff(text1, text2) {
+        // 정규화 (비교용)
+        const norm1 = normalizeText(text1);
+        const norm2 = normalizeText(text2);
+
+        // jsdiff의 diffWords 사용 (단어 단위 비교)
+        // Diff.diffWords(oldStr, newStr) -> [{value: "...", added: boolean, removed: boolean}, ...]
+        const diffs = Diff.diffWords(norm1, norm2);
+
+        let htmlLeft = "";
+        let htmlRight = "";
+
+        diffs.forEach((part) => {
+            // value의 특수문자 이스케이프 및 줄바꿈 처리
+            const escapedValue = part.value
+                .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                .replace(/\n/g, "<br>");
+
+            if (part.added) {
+                // 추가됨 -> 오른쪽 패널에 초록색
+                htmlRight += `<ins>${escapedValue}</ins>`;
+            } else if (part.removed) {
+                // 삭제됨 -> 왼쪽 패널에 빨간색
+                htmlLeft += `<del>${escapedValue}</del>`;
+            } else {
+                // 동일함 -> 양쪽에 평문
+                htmlLeft += `<span>${escapedValue}</span>`;
+                htmlRight += `<span>${escapedValue}</span>`;
+            }
+        });
+
+        return { left: htmlLeft, right: htmlRight, diffs: diffs };
+    }
+
+    // ---------------------------------------------------------
+    // 4. 핵심 변경 요약 (Summary)
+    // ---------------------------------------------------------
+    function summarizeChanges(diffs) {
+        const summaryDiv = document.getElementById('summaryOutput');
+        let html = "";
+        let hasChanges = false;
+
+        // 단순 자구 수정 등을 거르기 위한 길이 임계값 (글자수)
+        const LENGTH_THRESHOLD = 15;
+
+        diffs.forEach(part => {
+            // 공백 정리 후 길이 체크
+            const text = part.value.trim().replace(/\s+/g, ' ');
+            if (text.length < LENGTH_THRESHOLD) return;
+
+            // [추가] 특정 노이즈 문구 필터링 (식품의약품안전처... 등)
+            // PDF 파싱 시 글자 사이에 공백이 들어가는 경우를 대비해, 공백을 다 빼고 검사
+            const cleanText = text.replace(/\s/g, "");
+            if (cleanText.includes("식품의약품안전처의약품통합정보시스템")) return;
+
+            // HTML 이스케이프
+            const safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+            if (part.added) {
+                html += `<div style="margin-bottom: 12px; padding: 12px; background-color: #e6ffed; border-left: 5px solid #22863a; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                    <div style="font-weight:bold; color:#22863a; margin-bottom:4px;">[새로 추가됨]</div>
+                    <div style="color:#333;">${safeText}</div>
+                </div>`;
+                hasChanges = true;
+            } else if (part.removed) {
+                html += `<div style="margin-bottom: 12px; padding: 12px; background-color: #ffeef0; border-left: 5px solid #b31d28; border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+                    <div style="font-weight:bold; color:#b31d28; margin-bottom:4px;">[삭제됨]</div>
+                    <div style="color:#333; text-decoration: line-through; opacity: 0.8;">${safeText}</div>
+                </div>`;
+                hasChanges = true;
+            }
+        });
+
+        if (!hasChanges) {
+            summaryDiv.innerHTML = "<p style='color:#999; text-align: center; padding: 20px;'>⚠️ 굵직한 문장 단위의 변경사항이 없습니다. (단순 자구 수정 위주)</p>";
+        } else {
+            summaryDiv.innerHTML = html;
+        }
+    }
+
+
+    // ---------------------------------------------------------
+    // Event Listeners
+    // ---------------------------------------------------------
+    // ---------------------------------------------------------
+    // Drag & Drop UI Logic
+    // ---------------------------------------------------------
+    function setupDropZone(zoneId, inputId, nameId) {
+        const zone = document.getElementById(zoneId);
+        const input = document.getElementById(inputId);
+        const nameDisplay = document.getElementById(nameId);
+
+        // 클릭 시 파일 선택창 열기
+        zone.addEventListener('click', () => input.click());
+
+        // 파일 선택 시 처리
+        input.addEventListener('change', () => handleFiles(input.files));
+
+        // 드래그 앤 드롭 이벤트
+        zone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            zone.classList.add('dragover');
+        });
+        zone.addEventListener('dragleave', () => {
+            zone.classList.remove('dragover');
+        });
+        zone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            zone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                input.files = e.dataTransfer.files;
+                handleFiles(input.files);
+            }
+        });
+
+        function handleFiles(files) {
+            if (files.length > 0) {
+                nameDisplay.innerText = "✅ " + files[0].name;
+                zone.classList.add('active');
+            }
+        }
+    }
+
+    setupDropZone('drop-zone-1', 'file1', 'file-name-1');
+    setupDropZone('drop-zone-2', 'file2', 'file-name-2');
+
+    document.getElementById('compareBtn').addEventListener('click', async () => {
+        const file1 = document.getElementById('file1').files[0];
+        const file2 = document.getElementById('file2').files[0];
+        
+        if (!file1 || !file2) {
+            alert("두 개의 PDF 파일을 모두 선택해주세요.");
+            return;
+        }
+
+        const loader = document.getElementById('loading');
+        loader.style.display = 'block';
+        document.getElementById('output1').innerHTML = "";
+        document.getElementById('output2').innerHTML = "";
+
+        try {
+            // 1. 텍스트 추출
+            const text1 = await extractTextFromPdf(file1);
+            const text2 = await extractTextFromPdf(file2);
+
+            if (!text1.trim() || !text2.trim()) {
+                alert("텍스트를 추출할 수 없거나, 비교할 핵심 섹션(효능/용법 등)이 발견되지 않았습니다.");
+                loader.style.display = 'none';
+                return;
+            }
+
+            // 2. 비교
+            const result = computeDiff(text1, text2);
+
+            // 3. 출력
+            document.getElementById('output1').innerHTML = result.left;
+            document.getElementById('output2').innerHTML = result.right;
+
+            // 4. 요약 출력
+            summarizeChanges(result.diffs);
+
+        } catch (e) {
+            console.error(e);
+            alert("비교 중 오류가 발생했습니다: " + e.message);
+        } finally {
+            loader.style.display = 'none';
+        }
+    });
+
+</script>
+</body>
+</html>
